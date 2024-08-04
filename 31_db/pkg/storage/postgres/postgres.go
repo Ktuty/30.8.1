@@ -34,7 +34,7 @@ type Task struct {
 
 type Label struct {
 	ID     int
-	name string
+	Name string
 } 
 
 func (s *Storage) Tasks(taskID, authorId int) ([]Task, error) {
@@ -86,11 +86,11 @@ func (s *Storage) Tasks(taskID, authorId int) ([]Task, error) {
 func (s *Storage) NewTask(task Task) (int, error) {
 	var id int
 	err := s.db.QueryRow(context.Background(), `
-    INSERT INTO tasks (title, content)
-    VALUES ($1, $2)
+    INSERT INTO tasks (name, title, content)
+    VALUES ('Default', $1, $2)
     RETURNING id;
     `,
-		 task.Title, task.Content,
+		  task.Title, task.Content,
 		 ).Scan(&id)
 
   if err != nil {
@@ -134,30 +134,20 @@ func (s *Storage) EditTask(task Task) (int, error) {
 
 func (s *Storage) TasksByLabel(label Label) ([]Task, error) {
 
-	err := s.db.QueryRow(context.Background(), `
-    SELECT id
-    FROM labels
-    WHERE name = $1
-    `, label.name).Scan(&label.ID)
-	
-		if err!= nil {
-      return nil, err
-    }
+		err := s.db.QueryRow(context.Background(), `
+		SELECT id
+		FROM labels
+		WHERE name = $1
+	`, label.Name).Scan(&label.ID)
 
-		rows, err := s.db.Query(context.Background(), `
-		SELECT
-				id,
-				opened,
-				closed,
-				author_id,
-				assigned_id,
-				title,
-				content
-		FROM
-				tasks
-		WHERE
-				assigned_id = $1
-		ORDER BY id;
+	if err != nil {
+		return nil, err
+	}
+
+	rows, err := s.db.Query(context.Background(), `
+		SELECT task_id
+		FROM tasks_labels
+		WHERE label_id = $1
 	`, label.ID)
 
 	if err != nil {
@@ -166,10 +156,46 @@ func (s *Storage) TasksByLabel(label Label) ([]Task, error) {
 
 	defer rows.Close()
 
-	var tasks []Task
+	tx, err := s.db.Begin(context.Background())
+	if err != nil {
+		return nil, err
+	}
+
+	var taskIDs []int
+
 	for rows.Next() {
+		var taskID int
+		err = rows.Scan(&taskID)
+		if err != nil {
+			tx.Rollback(context.Background())
+			return nil, err
+		}
+		taskIDs = append(taskIDs, taskID)
+	}
+
+	if err = rows.Err(); err != nil {
+		tx.Rollback(context.Background())
+		return nil, err
+	}
+
+	var tasks []Task
+	for _, taskID := range taskIDs {
 		var task Task
-		err = rows.Scan(
+		err = tx.QueryRow(context.Background(), `
+			SELECT
+				id,
+				opened,
+				closed,
+				author_id,
+				assigned_id,
+				title,
+				content
+			FROM
+				tasks
+			WHERE
+				id = $1
+			ORDER BY id;
+		`, taskID).Scan(
 			&task.ID,
 			&task.Opened,
 			&task.Closed,
@@ -180,10 +206,17 @@ func (s *Storage) TasksByLabel(label Label) ([]Task, error) {
 		)
 
 		if err != nil {
+			tx.Rollback(context.Background())
 			return nil, err
 		}
-		
+
 		tasks = append(tasks, task)
 	}
-return tasks, rows.Err()
+
+	err = tx.Commit(context.Background())
+	if err != nil {
+		return nil, err
+	}
+
+	return tasks, nil
 }
