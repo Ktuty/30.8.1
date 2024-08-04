@@ -134,13 +134,11 @@ func (s *Storage) EditTask(task Task) (int, error) {
 
 func (s *Storage) TasksByLabel(label Label) ([]Task, error) {
 
-	var labelID int
-
 	err := s.db.QueryRow(context.Background(), `
     SELECT id
     FROM labels
     WHERE name = $1
-    `, label.name).Scan(&labelID)
+    `, label.name).Scan(&label.ID)
 	
 		if err!= nil {
       return nil, err
@@ -160,7 +158,7 @@ func (s *Storage) TasksByLabel(label Label) ([]Task, error) {
 		WHERE
 				assigned_id = $1
 		ORDER BY id;
-	`, labelID)
+	`, label.ID)
 
 	if err != nil {
 		return nil, err
